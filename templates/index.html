@@ -66,6 +66,19 @@
   .door-student { background: var(--teal); color: #fff; }
   .door-student:focus-visible { outline-color: #fff; outline-offset: -8px; }
 
+  .grade { margin-bottom: 18px; }
+  .grade-title { font-weight: 700; margin: 0 0 8px; color: var(--muted); font-size: 15px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    background: var(--card); border: 2px solid var(--ink); border-radius: 10px;
+    padding: 9px 16px; min-width: 60px; cursor: pointer; font-weight: 700;
+  }
+  .chip:hover { background: #e3e9f3; }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--marker); }
+  .student-mode .chip { border-color: var(--teal); }
+  .student-mode .chip:hover { background: #dff0ed; }
+  .student-mode .chip[aria-pressed="true"] { background: var(--teal); color: #fff; }
+
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; max-width: 460px; }
   .field label { font-weight: 600; }
   input[type="text"], input[type="password"] {
@@ -98,109 +111,226 @@
 
   .task { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; padding: 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .task .subj { font-weight: 700; font-size: 18px; word-break: break-all; }
-  
   .empty { background: var(--card); border: 2px dashed var(--line); border-radius: 14px; padding: 28px 22px; color: var(--muted); }
 
-  @media (max-width: 640px) {
-    .doors { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-    .door { min-height: 38vh; }
-    .task { flex-direction: column; align-items: flex-start; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 30px);
+    background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 10px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 10;
   }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
 </style>
 </head>
 <body>
-
-<div id="app">
-  <div style="display:flex;flex-direction:column;flex:1">
-    <div class="doors">
-      <!-- Кнопка перехода для учителя -->
-      <button class="door door-teacher" onclick="showTeacherPanel()">
-        <span class="big">Öğretmen</span>
-        <span class="small">Sınıfa ödev dosyası yükle</span>
-      </button>
-      <!-- Кнопка просмотра для учеников -->
-      <button class="door door-student" onclick="showStudentPanel()">
-        <span class="big">Öğrenci</span>
-        <span class="small">Yüklenen ödevleri gör ve indir</span>
-      </button>
-    </div>
-  </div>
-</div>
+<div id="app"></div>
+<div id="toast"></div>
 
 <script>
-function showTeacherPanel() {
-  document.body.className = "teacher-mode";
-  document.getElementById("app").innerHTML = `
-    <div>
-      <header class="topbar">
-        <div class="brand">Ödev Panosu</div>
-        <button class="link-btn" onclick="location.reload()">← Ana sayfa</button>
-      </header>
-      <main class="page">
-        <h1>Ödev Yükle</h1>
-        <p class="lead">Bilgisayarınızdan .txt ödev dosyasını seçin ve yükleyin.</p>
-        
-        <!-- Форма отправки на сервер Flask (/upload) -->
-        <form action="/upload" method="post" enctype="multipart/form-data">
-          <label class="drop">
-            <input type="file" name="file" accept=".txt" required onchange="updateFileName(this)">
-            <strong id="file-label-text">Bir .txt dosyası seçin veya tıklayın</strong>
-            <span>Sunucuya yüklenecek</span>
-          </label>
-          <button class="btn" type="submit">Ödevi Sunucuya Yükle</button>
-        </form>
-      </main>
-    </div>
-  `;
+const TEACHER_CODE = "ogretmen";
+const GRADES = [9, 10, 11, 12];
+const SECTIONS = ["ATP", "A", "B", "C", "D", "Özel Sınıf"];
+const DEFAULT_CLASSES = GRADES.flatMap(g => SECTIONS.map(s => g + "-" + s));
+
+const state = {
+  view: "home",
+  cls: null,
+  teacherName: "",
+  error: ""
+};
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3000);
 }
 
-function showStudentPanel() {
-  document.body.className = "student-mode";
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return el;
+}
+
+function topbar(backLabel, backAction) {
+  return h("header", { class: "topbar" },
+    h("div", { class: "brand" }, "Ödev Panosu"),
+    backLabel && h("button", { class: "link-btn", onclick: backAction }, backLabel)
+  );
+}
+
+function classChips(selectedCls, onPick) {
+  const box = h("div", {});
+  const grouped = new Map();
+  DEFAULT_CLASSES.forEach(c => {
+    const g = c.split("-")[0];
+    if (!grouped.has(g)) grouped.set(g, []);
+    grouped.get(g).push(c);
+  });
+
+  for (const [grade, list] of grouped.entries()) {
+    const chips = h("div", { class: "chips" });
+    for (const c of list) {
+      chips.append(h("button", {
+        class: "chip",
+        "aria-pressed": String(selectedCls === c),
+        onclick: () => onPick(c)
+      }, c.replace(grade + "-", "")));
+    }
+    box.append(h("div", { class: "grade" }, h("p", { class: "grade-title" }, grade + ". Sınıf"), chips));
+  }
+  return box;
+}
+
+function viewHome() {
+  document.body.className = "";
+  return h("div", { style: "display:flex;flex-direction:column;flex:1" },
+    h("div", { class: "doors" },
+      h("button", { class: "door door-teacher", onclick: () => go(state.teacherName ? "teacher" : "teacherLogin") },
+        h("span", { class: "big" }, "Öğretmen"),
+        h("span", { class: "small" }, "Sınıfa ödev dosyası yükle")
+      ),
+      h("button", { class: "door door-student", onclick: () => go("studentPick") },
+        h("span", { class: "big" }, "Öğrenci"),
+        h("span", { class: "small" }, "Sınıfını seç ve ödevini gör")
+      )
+    )
+  );
+}
+
+function viewTeacherLogin() {
+  document.body.className = "teacher-mode";
+  const nameIn = h("input", { type: "text", id: "tname", value: state.teacherName, required: true });
+  const codeIn = h("input", { type: "password", id: "tcode", required: true });
   
-  // Передаем массив файлов, которые прилетели из Python в шаблон Jinja2
-  const files = [
+  const form = h("form", { onsubmit: (e) => {
+    e.preventDefault();
+    if (codeIn.value !== TEACHER_CODE) {
+      state.error = "Kod yanlış! (Şifre: ogretmen)";
+      render();
+      return;
+    }
+    state.teacherName = nameIn.value.trim();
+    go("teacher");
+  }},
+    h("div", { class: "field" }, h("label", {}, "Adınız Soyadınız"), nameIn),
+    h("div", { class: "field" }, h("label", {}, "Öğretmen Kodu"), codeIn),
+    state.error && h("p", { class: "error", style: "color:var(--danger)" }, state.error),
+    h("button", { class: "btn", type: "submit" }, "Giriş Yap")
+  );
+
+  return h("div", {}, topbar("← Ana sayfa", () => go("home")),
+    h("main", { class: "page" },
+      h("h1", {}, "Öğretmen Girişi"),
+      h("p", { class: "lead" }, "Lütfen adınızı ve şifrenizi girin."),
+      form
+    )
+  );
+}
+  
+function viewTeacher() {
+  document.body.className = "teacher-mode";
+  const page = h("main", { class: "page" });
+  
+  page.append(
+    h("h1", {}, "Ödev Yükleme Paneli"),
+    h("p", { class: "lead" }, `Hoş geldiniz, ${state.teacherName}. Önce sınıf seçin, ardından dosya yükleyin.`)
+  );
+
+  page.append(h("h2", {}, "1. Sınıf Seçin"));
+  page.append(classChips(state.cls, (c) => { state.cls = c; render(); }));
+
+  if (state.cls) {
+    page.append(h("h2", {}, `2. Sınıf İçin Dosya Yükle: ${state.cls}`));
+    
+    const uploadForm = h("form", { action: "/upload", method: "post", enctype: "multipart/form-data" },
+      h("input", { type: "hidden", name: "class_name", value: state.cls }),
+      h("label", { class: "drop" },
+        h("input", { type: "file", name: "file", accept: ".txt", required: true, onchange: (e) => {
+          if(e.target.files[0]) e.target.closest('label').querySelector('strong').textContent = "Seçilen: " + e.target.files[0].name;
+        }}),
+        h("strong", {}, "Bir .txt dosyası seçin veya buraya sürükleyin"),
+        h("span", {}, "Maksimum dosya boyutu: .txt formatı")
+      ),
+      h("button", { class: "btn", type: "submit" }, `Ödevi (${state.cls}) Yükle`)
+    );
+    page.append(uploadForm);
+  }
+
+  return h("div", {}, topbar("Çıkış", () => { state.cls = null; go("home"); }), page);
+}
+
+function viewStudentPick() {
+  document.body.className = "student-mode";
+  const page = h("main", { class: "page" },
+    h("h1", {}, "Sınıfınızı Seçin"),
+    h("p", { class: "lead" }, "Ödevleri görmek için kendi sınıfınızı seçin."),
+    classChips(null, (c) => { state.cls = c; go("student"); })
+  );
+  return h("div", {}, topbar("← Ana sayfa", () => go("home")), page);
+}
+
+function viewStudent() {
+  document.body.className = "student-mode";
+  const page = h("main", { class: "page" });
+  page.append(
+    h("h1", {}, `${state.cls} Ödevleri`),
+    h("p", { class: "lead" }, "Bu sınıfa yüklenen ödev dosyaları:")
+  );
+
+  const serverFiles = [
     {% for file in files %}
-      "{{ file }}",
-    {% endfor %}
+      { name: "{{ file.name }}", cls: "{{ file.cls }}" },
+    {% endfor %>
   ];
 
-  let filesHtml = "";
-  if (files.length > 0) {
-    files.forEach(file => {
-      filesHtml += `
-        <div class="task">
-          <span class="subj">📄 ${file}</span>
-          <a class="btn" href="/static/uploads/${file}" download>İndir (.txt)</a>
-        </div>
-      `;
+  const filteredFiles = serverFiles.filter(f => f.cls === state.cls);
+
+  if (filteredFiles.length > 0) {
+    const listContainer = h("div", { style: "margin-top: 20px;" });
+    filteredFiles.forEach(f => {
+      listContainer.append(
+        h("div", { class: "task" },
+          h("span", { class: "subj" }, `📄 ${f.name}`),
+          h("a", { class: "btn", href: `/static/uploads/${f.name}`, download: true }, "İndir (.txt)")
+        )
+      );
     });
+    page.append(listContainer);
   } else {
-    filesHtml = `<div class="empty">Henüz yüklenmiş ödev dosyası bulunmuyor.</div>`;
+    page.append(h("div", { class: "empty" }, `${state.cls} için henüz ödev yüklenmemiş.`));
   }
 
-  document.getElementById("app").innerHTML = `
-    <div>
-      <header class="topbar">
-        <div class="brand">Ödev Panosu</div>
-        <button class="link-btn" onclick="location.reload()">← Ana sayfa</button>
-      </header>
-      <main class="page">
-        <h1>Mevcut Ödevler</h1>
-        <p class="lead">Öğretmenin yüklediği dosyaları aşağıdan indirebilirsiniz:</p>
-        <div style="margin-top: 20px;">
-          ${filesHtml}
-        </div>
-      </main>
-    </div>
-  `;
+  return h("div", {}, topbar("← Sınıf değişt습", () => go("studentPick")), page);
 }
 
-function updateFileName(input) {
-  if (input.files && input.files[0]) {
-    document.getElementById("file-label-text").innerText = "Seçilen dosya: " + input.files[0].name;
-  }
+function go(view) {
+  state.view = view;
+  render();
+  window.scrollTo(0, 0);
 }
+
+function render() {
+  const app = document.getElementById("app");
+  const views = {
+    home: viewHome,
+    teacherLogin: viewTeacherLogin,
+    teacher: viewTeacher,
+    studentPick: viewStudentPick,
+    student: viewStudent
+  };
+  app.replaceChildren(views[state.view]());
+}
+
+render();
 </script>
-
 </body>
 </html>
