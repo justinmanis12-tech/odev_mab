@@ -9,12 +9,15 @@ from functools import wraps
 
 from flask import Flask, jsonify, request, send_from_directory
 
-BASE_DIR = os.path.dirname(os.path.abspath(file))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# На Render с Persistent Disk задай DATA_DIR=/data (путь, куда смонтирован диск)
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "data.json")
 
+# Код учителя лучше задать переменной окружения TEACHER_CODE на Render
 _env_code = os.environ.get("TEACHER_CODE")
+# убираем пробелы и случайные кавычки вокруг значения из панели Render
 TEACHER_CODE = (_env_code if _env_code else "ogretmen").strip().strip("\"'").strip()
 
 GRADES = [9, 10, 11, 12]
@@ -23,10 +26,12 @@ DEFAULT_CLASSES = [f"{g}-{s}" for g in GRADES for s in SECTIONS]
 
 MAX_TEXT_CHARS = 400_000
 
-app = Flask(name)
+app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 lock = threading.Lock()
 
+
+# ---------- хранение ----------
 def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -43,13 +48,14 @@ def save_data(d):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False)
-        os.replace(tmp, DATA_FILE) 
+        os.replace(tmp, DATA_FILE)  # атомарная запись, файл не побьётся при сбое
     except Exception:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
 
 
+# ---------- авторизация ----------
 def code_ok(code):
     return secrets.compare_digest(str(code).strip().encode("utf-8"), TEACHER_CODE.encode("utf-8"))
 
@@ -62,10 +68,14 @@ def teacher_only(fn):
         return fn(*args, **kwargs)
     return wrapper
 
+
+# ---------- страница ----------
 @app.route("/")
 def home():
     return send_from_directory(os.path.join(BASE_DIR, "templates"), "index.html")
 
+
+# ---------- API ----------
 @app.get("/api/data")
 def get_data():
     with lock:
@@ -77,6 +87,7 @@ def get_data():
 
 @app.get("/api/health")
 def health():
+    # Показывает, что задеплоена новая версия и видна ли переменная (сам код не раскрывается)
     return jsonify(version="v3", teacher_code_from_env=bool(_env_code))
 
 
@@ -114,7 +125,8 @@ def add_task():
         return jsonify(error="Dosya boş"), 400
     if len(text) > MAX_TEXT_CHARS:
         return jsonify(error="Dosya çok büyük"), 413
-    task = { "id": uuid.uuid4().hex[:12],
+    task = {
+        "id": uuid.uuid4().hex[:12],
         "cls": cls,
         "subject": str(body.get("subject", "")).strip()[:60],
         "teacher": str(body.get("teacher", "")).strip()[:100],
@@ -145,5 +157,5 @@ def delete_task(task_id):
     return jsonify(error="Ödev bulunamadı"), 404
 
 
-if name == "main":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
