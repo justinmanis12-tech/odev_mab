@@ -78,6 +78,7 @@
   .student-mode .chip { border-color: var(--teal); }
   .student-mode .chip:hover { background: #dff0ed; }
   .student-mode .chip[aria-pressed="true"] { background: var(--teal); color: #fff; }
+  .chip small { font-weight: 500; color: var(--muted); margin-left: 6px; }
 
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; max-width: 460px; }
   .field label { font-weight: 600; }
@@ -90,60 +91,107 @@
   .btn {
     background: var(--ink); color: #fff; border: 0; border-radius: 10px;
     padding: 12px 22px; font-weight: 600; cursor: pointer;
-    text-decoration: none; display: inline-block; text-align: center;
   }
   .btn:hover:not(:disabled) { background: #22335c; }
   .btn:disabled { background: #9aa5bb; cursor: not-allowed; }
   .btn-ghost { background: transparent; color: var(--ink); border: 2px solid var(--ink); }
   .btn-ghost:hover:not(:disabled) { background: #e3e9f3; }
-  .student-mode .btn:not(.btn-ghost) { background: var(--teal); }
-  .student-mode .btn:not(.btn-ghost):hover { background: #0b5c51; }
+  .btn-danger { background: transparent; color: var(--danger); border: 2px solid var(--danger); padding: 8px 14px; }
+  .btn-danger:hover { background: #fbeae9; }
+  .student-mode .btn:not(.btn-ghost):not(.btn-danger) { background: var(--teal); }
+  .student-mode .btn:not(.btn-ghost):not(.btn-danger):hover { background: #0b5c51; }
+
+  .inline-form { display: flex; gap: 10px; margin-top: 8px; max-width: 460px; }
+  .inline-form input { flex: 1; }
+  .error { color: var(--danger); font-weight: 600; margin: 0 0 14px; }
 
   .drop {
     display: block; cursor: pointer; position: relative;
     border: 2px dashed var(--ink); border-radius: 14px; background: var(--card);
     padding: 28px 20px; text-align: center; margin-bottom: 18px;
   }
-  .drop:hover { background: #fff6da; border-color: #8a6a00; }
+  .drop:hover, .drop.over { background: #fff6da; border-color: #8a6a00; }
   .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .drop:focus-within { outline: 3px solid var(--teal); outline-offset: 3px; }
   .drop strong { display: block; font-size: 18px; }
   .drop span { color: var(--muted); }
 
-  .task { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; padding: 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .task .subj { font-weight: 700; font-size: 18px; word-break: break-all; }
+  pre.text {
+    white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere;
+    font-family: var(--font-body); font-size: 17px; line-height: 1.6;
+    margin: 0; max-width: 72ch;
+  }
+  .preview { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; }
+  .preview .meta { color: var(--muted); font-size: 15px; margin-bottom: 8px; }
+  
+  .task { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 14px; overflow: hidden; }
+  .task summary {
+    list-style: none; cursor: pointer; padding: 16px 20px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;
+  }
+  .task summary::-webkit-details-marker { display: none; }
+  .task summary::before { content: "▸"; font-size: 14px; transition: transform .15s ease; }
+  .task[open] summary::before { transform: rotate(90deg); }
+  .task .subj { font-weight: 700; font-size: 18px; }
+  .task .when { color: var(--muted); font-size: 15px; margin-left: auto; }
+  .task .body { padding: 0 20px 18px 40px; }
+  .task .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .task .by { color: var(--muted); font-size: 15px; margin: 0 0 12px; }
+
   .empty { background: var(--card); border: 2px dashed var(--line); border-radius: 14px; padding: 28px 22px; color: var(--muted); }
 
   #toast {
     position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 30px);
     background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 10px;
-    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 10;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; max-width: 90vw; z-index: 10;
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 640px) {
+    .doors { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .door { min-height: 38vh; }
+    .task .body { padding-left: 20px; }
+    .task .when { margin-left: 0; width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
+console.log("%cBu site iki arkadaş tarafından okul için özel olarak geliştirilmiştir! © 2026", "color: #0a917f; font-size: 16px; font-weight: bold;");
+
 const TEACHER_CODE = "ogretmen";
 const GRADES = [9, 10, 11, 12];
 const SECTIONS = ["ATP", "A", "B", "C", "D", "Özel Sınıf"];
 const DEFAULT_CLASSES = GRADES.flatMap(g => SECTIONS.map(s => g + "-" + s));
+const MAX_FILE_KB = 300;
+const STORAGE_KEY = "odev_panosu_v1";
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && Array.isArray(d.classes) && d.tasks && typeof d.tasks === "object") return d;
+    }
+  } catch (e) {}
+  return { classes: DEFAULT_CLASSES.slice(), tasks: {} };
+}
+function saveData() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); return true; }
+  catch (e) { return false; }
+}
+let data = loadData();
 
 const state = {
-  view: "home",
+  view: "home",        
   cls: null,
-  teacherName: "",
-  error: ""
+  subject: "",
+  file: null,          
 };
-
-function toast(msg) {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 3000);
-}
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -151,13 +199,66 @@ function h(tag, attrs, ...kids) {
     if (v == null || v === false) continue;
     if (k === "class") el.className = v;
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
     else el.setAttribute(k, v);
   }
   for (const kid of kids.flat()) {
-    if (kid == null) continue;
+    if (kid == null || kid === false) continue;
     el.append(kid.nodeType ? kid : document.createTextNode(kid));
   }
   return el;
+}
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+}
+function fmtDate(iso) {
+  return new Date(iso).toLocaleString("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+}
+function gradeOf(c) { const m = c.match(/^\s*(\d+)/); return m ? parseInt(m[1], 10) : 0; }
+function shortName(c) { return c.replace(/^\s*\d+\s*[-–.]?\s*/, "") || c; }
+function groupedClasses() {
+  const g = new Map();
+  data.classes.forEach(c => { const k = gradeOf(c); if (!g.has(k)) g.set(k, []); g.get(k).push(c); });
+  return [...g.entries()].sort((a, b) => a[0] - b[0]);
+}
+function tasksOf(cls) {
+  return (data.tasks[cls] || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+}
+function go(view, extra) {
+  Object.assign(state, { view, error: "" }, extra || {});
+  render();
+  window.scrollTo(0, 0);
+}
+
+async function readTxt(file) {
+  const buf = await file.arrayBuffer();
+  let text;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch (e) { text = new TextDecoder("windows-1254").decode(buf); }
+  return text.replace(/^\uFEFF/, "");
+}
+async function pickFile(file) {
+  if (!file) return;
+  if (!/\.txt$/i.test(file.name)) { toast("Dosya uzantısı .txt olmalı"); return; }
+  if (file.size > MAX_FILE_KB * 1024) { toast("Dosya " + MAX_FILE_KB + " KB'den büyük — ödevi kısaltın"); return; }
+  try {
+    const text = await readTxt(file);
+    if (!text.trim()) { toast("Dosya boş"); return; }
+    state.file = { name: file.name, size: file.size, text };
+    render();
+  } catch (e) { toast("Dosya okunamadı"); }
+}
+function downloadTxt(task) {
+  const blob = new Blob([task.text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: task.fileName });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function topbar(backLabel, backAction) {
@@ -166,28 +267,43 @@ function topbar(backLabel, backAction) {
     backLabel && h("button", { class: "link-btn", onclick: backAction }, backLabel)
   );
 }
-
-function classChips(selectedCls, onPick) {
+function classChips(onPick) {
   const box = h("div", {});
-  const grouped = new Map();
-  DEFAULT_CLASSES.forEach(c => {
-    const g = c.split("-")[0];
-    if (!grouped.has(g)) grouped.set(g, []);
-    grouped.get(g).push(c);
-  });
-
-  for (const [grade, list] of grouped.entries()) {
-    const chips = h("div", { class: "chips" });
+  for (const [grade, list] of groupedClasses()) {
+    const chips = h("div", { class: "chips", role: "group", "aria-label": grade ? grade + ". sınıf" : "Diğer" });
     for (const c of list) {
+      const n = (data.tasks[c] || []).length;
       chips.append(h("button", {
-        class: "chip",
-        "aria-pressed": String(selectedCls === c),
-        onclick: () => onPick(c)
-      }, c.replace(grade + "-", "")));
+        class: "chip", "aria-pressed": String(state.cls === c), "aria-label": c, onclick: () => onPick(c)
+      }, grade ? shortName(c) : c, n > 0 ? h("small", {}, String(n)) : null));
     }
-    box.append(h("div", { class: "grade" }, h("p", { class: "grade-title" }, grade + ". Sınıf"), chips));
+    box.append(h("div", { class: "grade" }, h("p", { class: "grade-title" }, grade ? grade + ". sınıf" : "Diğer"), chips));
   }
   return box;
+}
+function taskCard(task, opts) {
+  const card = h("details", { class: "task", open: opts.open });
+  card.append(h("summary", {},
+    h("span", { class: "subj" }, task.subject || task.fileName),
+    h("span", { class: "when" }, fmtDate(task.date))
+  ));
+  const body = h("div", { class: "body" });
+  const by = [task.subject ? task.fileName : null, task.teacher ? "Öğretmen: " + task.teacher : null].filter(Boolean).join(" · ");
+  if (by) body.append(h("p", { class: "by" }, by));
+  body.append(h("pre", { class: "text" }, task.text));
+  const actions = h("div", { class: "actions" },
+    h("button", { class: "btn btn-ghost", onclick: () => downloadTxt(task) }, ".txt indir")
+  );
+  if (opts.deletable) {
+    actions.append(h("button", { class: "btn btn-danger", onclick: () => {
+      if (!confirm("Bu ödev silinsin mi? (" + task.cls + ")")) return;
+      data.tasks[task.cls] = (data.tasks[task.cls] || []).filter(t => t.id !== task.id);
+      saveData(); toast("Ödev silindi"); render();
+    } }, "Sil"));
+  }
+  body.append(actions);
+  card.append(body);
+  return card;
 }
 
 function viewHome() {
@@ -198,7 +314,7 @@ function viewHome() {
         h("span", { class: "big" }, "Öğretmen"),
         h("span", { class: "small" }, "Sınıfa ödev dosyası yükle")
       ),
-      h("button", { class: "door door-student", onclick: () => go("studentPick") },
+      h("button", { class: "door door-student", onclick: () => go("studentPick", { cls: null }) },
         h("span", { class: "big" }, "Öğrenci"),
         h("span", { class: "small" }, "Sınıfını seç ve ödevini gör")
       )
@@ -208,128 +324,130 @@ function viewHome() {
 
 function viewTeacherLogin() {
   document.body.className = "teacher-mode";
-  const nameIn = h("input", { type: "text", id: "tname", value: state.teacherName, required: true });
-  const codeIn = h("input", { type: "password", id: "tcode", required: true });
-  
+  const nameIn = h("input", { type: "text", id: "tname", autocomplete: "name", value: state.teacherName, required: true });
+  const codeIn = h("input", { type: "password", id: "tcode", autocomplete: "current-password", required: true });
   const form = h("form", { onsubmit: (e) => {
     e.preventDefault();
-    if (codeIn.value !== TEACHER_CODE) {
-      state.error = "Kod yanlış! (Şifre: ogretmen)";
-      render();
-      return;
-    }
-    state.teacherName = nameIn.value.trim();
-    go("teacher");
-  }},
-    h("div", { class: "field" }, h("label", {}, "Adınız Soyadınız"), nameIn),
-    h("div", { class: "field" }, h("label", {}, "Öğretmen Kodu"), codeIn),
-    state.error && h("p", { class: "error", style: "color:var(--danger)" }, state.error),
-    h("button", { class: "btn", type: "submit" }, "Giriş Yap")
+    if (codeIn.value !== TEACHER_CODE) { state.error = "Kod yanlış. Kodu site yöneticisinden öğrenin."; render(); return; }
+    go("teacher", { teacherName: nameIn.value.trim() });
+  } },
+    h("div", { class: "field" }, h("label", { for: "tname" }, "Adınız soyadınız"), nameIn),
+    h("div", { class: "field" }, h("label", { for: "tcode" }, "Öğretmen kodu"), codeIn),
+    state.error && h("p", { class: "error", role: "alert" }, state.error),
+    h("button", { class: "btn", type: "submit" }, "Giriş yap")
   );
-
-  return h("div", {}, topbar("← Ana sayfa", () => go("home")),
-    h("main", { class: "page" },
-      h("h1", {}, "Öğretmen Girişi"),
-      h("p", { class: "lead" }, "Lütfen adınızı ve şifrenizi girin."),
-      form
-    )
+  const page = h("main", { class: "page" },
+    h("h1", {}, "Öğretmen girişi"),
+    h("p", { class: "lead" }, "Adınızı ve kodu yazın. Sonra sınıfı seçip ödevi yükleyebilirsiniz."),
+    form
   );
+  setTimeout(() => (state.teacherName ? codeIn : nameIn).focus(), 0);
+  return h("div", {}, topbar("← Ana sayfa", () => go("home")), page);
 }
-  
+
 function viewTeacher() {
   document.body.className = "teacher-mode";
+  const logout = () => { state.teacherName = ""; state.cls = null; state.file = null; state.subject = ""; go("home"); };
   const page = h("main", { class: "page" });
-  
   page.append(
-    h("h1", {}, "Ödev Yükleme Paneli"),
-    h("p", { class: "lead" }, `Hoş geldiniz, ${state.teacherName}. Önce sınıf seçin, ardından dosya yükleyin.`)
+    h("h1", {}, "Ödev yükle"),
+    h("p", { class: "lead" }, "Merhaba, " + state.teacherName + ". Önce sınıfı seçin, sonra ödevin olduğu .txt dosyasını ekleyin.")
   );
 
-  page.append(h("h2", {}, "1. Sınıf Seçin"));
-  page.append(classChips(state.cls, (c) => { state.cls = c; render(); }));
+  page.append(h("h2", {}, "1. Sınıf"));
+  page.append(classChips((c) => { state.cls = c; state.file = null; state.subject = ""; render(); }));
 
-  if (state.cls) {
-    page.append(h("h2", {}, `2. Sınıf İçin Dosya Yükle: ${state.cls}`));
-    
-    const uploadForm = h("form", { action: "/upload", method: "post", enctype: "multipart/form-data" },
-      h("input", { type: "hidden", name: "class_name", value: state.cls }),
-      h("label", { class: "drop" },
-        h("input", { type: "file", name: "file", accept: ".txt", required: true, onchange: (e) => {
-          if(e.target.files[0]) e.target.closest('label').querySelector('strong').textContent = "Seçilen: " + e.target.files[0].name;
-        }}),
-        h("strong", {}, "Bir .txt dosyası seçin veya buraya sürükleyin"),
-        h("span", {}, "Maksimum dosya boyutu: .txt formatı")
-      ),
-      h("button", { class: "btn", type: "submit" }, `Ödevi (${state.cls}) Yükle`)
-    );
-    page.append(uploadForm);
+  const addIn = h("input", { type: "text", placeholder: "Yeni sınıf, örn. 10-E", "aria-label": "Yeni sınıfın adı", maxlength: "20" });
+  page.append(h("form", { class: "inline-form", onsubmit: (e) => {
+    e.preventDefault();
+    const name = addIn.value.trim();
+    if (!name) return;
+    if (data.classes.some(c => c.toLowerCase() === name.toLowerCase())) { toast("Bu sınıf zaten var"); return; }
+    data.classes.push(name); saveData(); state.cls = name; render(); toast("Sınıf eklendi: " + name);
+  } }, addIn, h("button", { class: "btn btn-ghost", type: "submit" }, "Sınıf ekle")));
+
+  if (!state.cls) return h("div", {}, topbar("Çıkış", logout), page);
+
+  page.append(h("h2", {}, "2. Dosya: " + state.cls));
+  const subjIn = h("input", { type: "text", id: "subj", value: state.subject, placeholder: "Örn. Matematik", maxlength: "60",
+    oninput: (e) => { state.subject = e.target.value; } });
+  page.append(h("div", { class: "field" }, h("label", { for: "subj" }, "Ders (isteğe bağlı)"), subjIn));
+
+  const fileIn = h("input", { type: "file", accept: ".txt,text/plain", onchange: (e) => pickFile(e.target.files[0]) });
+  const drop = h("label", { class: "drop" },
+    fileIn,
+    h("strong", {}, state.file ? "Başka dosya seç" : "Bir .txt dosyası seçin veya buraya sürükleyin"),
+    h("span", {}, "En fazla " + MAX_FILE_KB + " KB")
+  );
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => pickFile(e.dataTransfer.files[0]));
+  page.append(drop);
+
+  if (state.file) {
+    const shown = state.file.text.length > 700 ? state.file.text.slice(0, 700) + "…" : state.file.text;
+    page.append(h("div", { class: "preview" },
+      h("div", { class: "meta" }, state.file.name + " · " + Math.max(1, Math.round(state.file.size / 1024)) + " KB"),
+      h("pre", { class: "text" }, shown)
+    ));
   }
 
-  return h("div", {}, topbar("Çıkış", () => { state.cls = null; go("home"); }), page);
+  page.append(h("button", { class: "btn", disabled: !state.file, onclick: () => {
+    const task = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      cls: state.cls,
+      subject: state.subject.trim(),
+      teacher: state.teacherName,
+      fileName: state.file.name,
+      text: state.file.text,
+      date: new Date().toISOString()
+    };
+    (data.tasks[state.cls] = data.tasks[state.cls] || []).push(task);
+    if (!saveData()) {
+      data.tasks[state.cls].pop();
+      toast("Kaydedilemedi: tarayıcı belleği kullanılamıyor veya dolu");
+      return;
+    }
+    const c = state.cls;
+    state.file = null; state.subject = "";
+    render(); toast("Ödev yüklendi: " + c);
+  } }, "Yükle: " + state.cls));
+
+  const list = tasksOf(state.cls);
+  page.append(h("h2", {}, "Yüklenen ödevler: " + state.cls + (list.length ? " (" + list.length + ")" : "")));
+  if (!list.length) page.append(h("div", { class: "empty" }, "Henüz ödev yok. İlk ödev yüklendiğinde burada görünecek."));
+  list.forEach(t => page.append(taskCard(t, { open: false, deletable: true })));
+
+  return h("div", {}, topbar("Çıkış", logout), page);
 }
 
 function viewStudentPick() {
   document.body.className = "student-mode";
   const page = h("main", { class: "page" },
-    h("h1", {}, "Sınıfınızı Seçin"),
-    h("p", { class: "lead" }, "Ödevleri görmek için kendi sınıfınızı seçin."),
-    classChips(null, (c) => { state.cls = c; go("student"); })
+    h("h1", {}, "Sınıfını seç"),
+    h("p", { class: "lead" }, "Sınıfın yanındaki sayı, o sınıfta kaç ödev olduğunu gösterir."),
+    classChips((c) => go("student", { cls: c }))
   );
   return h("div", {}, topbar("← Ana sayfa", () => go("home")), page);
 }
 
 function viewStudent() {
   document.body.className = "student-mode";
-  const page = h("main", { class: "page" });
-  page.append(
-    h("h1", {}, `${state.cls} Ödevleri`),
-    h("p", { class: "lead" }, "Bu sınıfa yüklenen ödev dosyaları:")
+  const list = tasksOf(state.cls);
+  const page = h("main", { class: "page" },
+    h("h1", {}, state.cls),
+    h("p", { class: "lead" }, list.length ? list.length + " ödev. Yenisi en üstte." : "Ödevler")
   );
-
-  const serverFiles = [
-    {% for file in files %}
-      { name: "{{ file.name }}", cls: "{{ file.cls }}" },
-    {% endfor %>
-  ];
-
-  const filteredFiles = serverFiles.filter(f => f.cls === state.cls);
-
-  if (filteredFiles.length > 0) {
-    const listContainer = h("div", { style: "margin-top: 20px;" });
-    filteredFiles.forEach(f => {
-      listContainer.append(
-        h("div", { class: "task" },
-          h("span", { class: "subj" }, `📄 ${f.name}`),
-          h("a", { class: "btn", href: `/static/uploads/${f.name}`, download: true }, "İndir (.txt)")
-        )
-      );
-    });
-    page.append(listContainer);
-  } else {
-    page.append(h("div", { class: "empty" }, `${state.cls} için henüz ödev yüklenmemiş.`));
-  }
-
-  return h("div", {}, topbar("← Sınıf değişt습", () => go("studentPick")), page);
-}
-
-function go(view) {
-  state.view = view;
-  render();
-  window.scrollTo(0, 0);
+  if (!list.length) page.append(h("div", { class: "empty" }, state.cls + " için henüz ödev yüklenmedi. Daha sonra tekrar bakın."));
+  list.forEach((t, i) => page.append(taskCard(t, { open: i === 0, deletable: false })));
+  return h("div", {}, topbar("← Başka sınıf", () => go("studentPick", { cls: null })), page);
 }
 
 function render() {
   const app = document.getElementById("app");
-  const views = {
-    home: viewHome,
-    teacherLogin: viewTeacherLogin,
-    teacher: viewTeacher,
-    studentPick: viewStudentPick,
-    student: viewStudent
-  };
+  const views = { home: viewHome, teacherLogin: viewTeacherLogin, teacher: viewTeacher, studentPick: viewStudentPick, student: viewStudent };
   app.replaceChildren(views[state.view]());
 }
-
 render();
 </script>
 </body>
