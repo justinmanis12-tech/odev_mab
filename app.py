@@ -114,8 +114,7 @@ def add_task():
         return jsonify(error="Dosya boş"), 400
     if len(text) > MAX_TEXT_CHARS:
         return jsonify(error="Dosya çok büyük"), 413
-    task = {
-    "id": uuid.uuid4().hex[:12],
+    task = { "id": uuid.uuid4().hex[:12],
         "cls": cls,
         "subject": str(body.get("subject", "")).strip()[:60],
         "teacher": str(body.get("teacher", "")).strip()[:100],
