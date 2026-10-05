@@ -163,34 +163,39 @@
 <script>
 console.log("%cBu site iki arkadaş tarafından okul için özel olarak geliştirilmiştir! © 2026", "color: #0a917f; font-size: 16px; font-weight: bold;");
 
-const TEACHER_CODE = "ogretmen";
-const GRADES = [9, 10, 11, 12];
-const SECTIONS = ["ATP", "A", "B", "C", "D", "Özel Sınıf"];
-const DEFAULT_CLASSES = GRADES.flatMap(g => SECTIONS.map(s => g + "-" + s));
 const MAX_FILE_KB = 300;
-const STORAGE_KEY = "odev_panosu_v1";
 
-function loadData() {
+// Все данные хранятся на сервере (app.py), а не в браузере
+let data = { classes: [], tasks: {} };
+
+async function api(method, url, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.teacherCode) headers["X-Teacher-Code"] = state.teacherCode;
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  let payload = null;
+  try { payload = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error((payload && payload.error) || "Sunucu hatası (" + res.status + ")");
+  return payload;
+}
+async function loadData() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d && Array.isArray(d.classes) && d.tasks && typeof d.tasks === "object") return d;
-    }
-  } catch (e) {}
-  return { classes: DEFAULT_CLASSES.slice(), tasks: {} };
+    const d = await api("GET", "/api/data");
+    if (d && Array.isArray(d.classes) && d.tasks) data = d;
+    return true;
+  } catch (e) {
+    toast("Sunucuya bağlanılamadı");
+    return false;
+  }
 }
-function saveData() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); return true; }
-  catch (e) { return false; }
-}
-let data = loadData();
+async function refresh() { if (await loadData()) render(); }
 
 const state = {
-  view: "home",        
+  view: "home",
   cls: null,
   subject: "",
-  file: null,          
+  file: null,
+  teacherName: "",
+  teacherCode: "",
 };
 
 function h(tag, attrs, ...kids) {
@@ -233,6 +238,7 @@ function go(view, extra) {
   Object.assign(state, { view, error: "" }, extra || {});
   render();
   window.scrollTo(0, 0);
+  if (view !== "home" && view !== "teacherLogin") refresh();  // подтянуть свежие данные с сервера
 }
 
 async function readTxt(file) {
@@ -295,10 +301,13 @@ function taskCard(task, opts) {
     h("button", { class: "btn btn-ghost", onclick: () => downloadTxt(task) }, ".txt indir")
   );
   if (opts.deletable) {
-    actions.append(h("button", { class: "btn btn-danger", onclick: () => {
+    actions.append(h("button", { class: "btn btn-danger", onclick: async () => {
       if (!confirm("Bu ödev silinsin mi? (" + task.cls + ")")) return;
-      data.tasks[task.cls] = (data.tasks[task.cls] || []).filter(t => t.id !== task.id);
-      saveData(); toast("Ödev silindi"); render();
+      try {
+        await api("DELETE", "/api/tasks/" + encodeURIComponent(task.id));
+        toast("Ödev silindi");
+      } catch (e) { toast(e.message); }
+      refresh();
     } }, "Sil"));
   }
   body.append(actions);
@@ -326,9 +335,17 @@ function viewTeacherLogin() {
   document.body.className = "teacher-mode";
   const nameIn = h("input", { type: "text", id: "tname", autocomplete: "name", value: state.teacherName, required: true });
   const codeIn = h("input", { type: "password", id: "tcode", autocomplete: "current-password", required: true });
-  const form = h("form", { onsubmit: (e) => {
+  const form = h("form", { onsubmit: async (e) => {
     e.preventDefault();
-    if (codeIn.value !== TEACHER_CODE) { state.error = "Kod yanlış. Kodu site yöneticisinden öğrenin."; render(); return; }
+    const code = codeIn.value;
+    try {
+      await api("POST", "/api/login", { code });
+    } catch (err) {
+      state.error = "Kod yanlış. Kodu site yöneticisinden öğrenin.";
+      render();
+      return;
+    }
+    state.teacherCode = code;
     go("teacher", { teacherName: nameIn.value.trim() });
   } },
     h("div", { class: "field" }, h("label", { for: "tname" }, "Adınız soyadınız"), nameIn),
@@ -347,7 +364,7 @@ function viewTeacherLogin() {
 
 function viewTeacher() {
   document.body.className = "teacher-mode";
-  const logout = () => { state.teacherName = ""; state.cls = null; state.file = null; state.subject = ""; go("home"); };
+  const logout = () => { state.teacherName = ""; state.teacherCode = ""; state.cls = null; state.file = null; state.subject = ""; go("home"); };
   const page = h("main", { class: "page" });
   page.append(
     h("h1", {}, "Ödev yükle"),
@@ -358,12 +375,17 @@ function viewTeacher() {
   page.append(classChips((c) => { state.cls = c; state.file = null; state.subject = ""; render(); }));
 
   const addIn = h("input", { type: "text", placeholder: "Yeni sınıf, örn. 10-E", "aria-label": "Yeni sınıfın adı", maxlength: "20" });
-  page.append(h("form", { class: "inline-form", onsubmit: (e) => {
+  page.append(h("form", { class: "inline-form", onsubmit: async (e) => {
     e.preventDefault();
     const name = addIn.value.trim();
     if (!name) return;
     if (data.classes.some(c => c.toLowerCase() === name.toLowerCase())) { toast("Bu sınıf zaten var"); return; }
-    data.classes.push(name); saveData(); state.cls = name; render(); toast("Sınıf eklendi: " + name);
+    try {
+      await api("POST", "/api/classes", { name });
+      state.cls = name;
+      toast("Sınıf eklendi: " + name);
+      await refresh();
+    } catch (err) { toast(err.message); }
   } }, addIn, h("button", { class: "btn btn-ghost", type: "submit" }, "Sınıf ekle")));
 
   if (!state.cls) return h("div", {}, topbar("Çıkış", logout), page);
@@ -392,25 +414,26 @@ function viewTeacher() {
     ));
   }
 
-  page.append(h("button", { class: "btn", disabled: !state.file, onclick: () => {
-    const task = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      cls: state.cls,
-      subject: state.subject.trim(),
-      teacher: state.teacherName,
-      fileName: state.file.name,
-      text: state.file.text,
-      date: new Date().toISOString()
-    };
-    (data.tasks[state.cls] = data.tasks[state.cls] || []).push(task);
-    if (!saveData()) {
-      data.tasks[state.cls].pop();
-      toast("Kaydedilemedi: tarayıcı belleği kullanılamıyor veya dolu");
+  page.append(h("button", { class: "btn", disabled: !state.file, onclick: async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const c = state.cls;
+    try {
+      await api("POST", "/api/tasks", {
+        cls: c,
+        subject: state.subject.trim(),
+        teacher: state.teacherName,
+        fileName: state.file.name,
+        text: state.file.text
+      });
+    } catch (err) {
+      toast("Yüklenemedi: " + err.message);
+      btn.disabled = false;
       return;
     }
-    const c = state.cls;
     state.file = null; state.subject = "";
-    render(); toast("Ödev yüklendi: " + c);
+    toast("Ödev yüklendi: " + c);
+    refresh();
   } }, "Yükle: " + state.cls));
 
   const list = tasksOf(state.cls);
@@ -449,6 +472,7 @@ function render() {
   app.replaceChildren(views[state.view]());
 }
 render();
+refresh();
 </script>
 </body>
 </html>
