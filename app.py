@@ -31,7 +31,6 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 lock = threading.Lock()
 
 
-# ---------- хранение ----------
 def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -55,7 +54,6 @@ def save_data(d):
         raise
 
 
-# ---------- авторизация ----------
 def code_ok(code):
     return secrets.compare_digest(str(code).strip().encode("utf-8"), TEACHER_CODE.encode("utf-8"))
 
@@ -69,13 +67,11 @@ def teacher_only(fn):
     return wrapper
 
 
-# ---------- страница ----------
 @app.route("/")
 def home():
     return send_from_directory(os.path.join(BASE_DIR, "templates"), "index.html")
 
 
-# ---------- API ----------
 @app.get("/api/data")
 def get_data():
     with lock:
