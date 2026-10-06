@@ -10,14 +10,11 @@ from functools import wraps
 from flask import Flask, jsonify, request, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# На Render с Persistent Disk задай DATA_DIR=/data (путь, куда смонтирован диск)
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "data.json")
 
-# Код учителя лучше задать переменной окружения TEACHER_CODE на Render
 _env_code = os.environ.get("TEACHER_CODE")
-# убираем пробелы и случайные кавычки вокруг значения из панели Render
 TEACHER_CODE = (_env_code if _env_code else "ogretmen").strip().strip("\"'").strip()
 
 GRADES = [9, 10, 11, 12]
@@ -83,7 +80,6 @@ def get_data():
 
 @app.get("/api/health")
 def health():
-    # Показывает, что задеплоена новая версия и видна ли переменная (сам код не раскрывается)
     return jsonify(version="v3", teacher_code_from_env=bool(_env_code))
 
 
