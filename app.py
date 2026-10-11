@@ -10,15 +10,15 @@ from supabase import create_client, Client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Подключение к Supabase из переменных окружения Render
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-# Поддерживаем как service_role, так и anon ключ
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY", "")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Критическая ошибка: SUPABASE_URL и SUPABASE_KEY должны быть заданы в переменных окружения Render!")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"Ошибка инициализации клиента Supabase: {e}")
 
 _env_code = os.environ.get("TEACHER_CODE")
 TEACHER_CODE = (_env_code if _env_code else "ogretmen").strip().strip("\"'").strip()
@@ -35,13 +35,12 @@ lock = threading.Lock()
 
 
 def load_data():
-    """Загружает классы и задачи из Supabase, формируя структуру для фронтенда"""
+    if not supabase:
+        return {"classes": DEFAULT_CLASSES[:], "tasks": {}, "error": "Supabase не подключен (нет ключей)"}
     try:
-        # Загружаем классы
         res_classes = supabase.table("classes").select("name").execute()
         classes = [row["name"] for row in (res_classes.data or [])]
 
-        # Если таблица классов пуста, автоматически заполняем дефолтными
         if not classes:
             classes = DEFAULT_CLASSES[:]
             for c in classes:
@@ -50,7 +49,6 @@ def load_data():
                 except Exception:
                     pass
 
-        # Загружаем задачи
         res_tasks = supabase.table("tasks").select("*").execute()
         tasks_dict = {}
         for t in (res_tasks.data or []):
@@ -68,7 +66,7 @@ def load_data():
 
         return {"classes": classes, "tasks": tasks_dict}
     except Exception as e:
-        print(f"Ошибка при загрузке данных из Supabase: {e}")
+        print(f"Ошибка загрузки из Supabase: {e}")
         return {"classes": DEFAULT_CLASSES[:], "tasks": {}}
 
 
@@ -101,7 +99,11 @@ def get_data():
 
 @app.get("/api/health")
 def health():
-    return jsonify(version="v3-supabase-ready", teacher_code_from_env=bool(_env_code))
+    return jsonify(
+        version="v3-safe",
+        supabase_connected=bool(supabase),
+        teacher_code_from_env=bool(_env_code)
+    )
 
 
 @app.post("/api/login")
@@ -115,6 +117,8 @@ def login():
 @app.post("/api/classes")
 @teacher_only
 def add_class():
+    if not supabase:
+        return jsonify(error="Veritabanı bağlantısı yok"), 500
     body = request.get_json(silent=True) or {}
     name = str(body.get("name", "")).strip()
     if not name or len(name) > 20:
@@ -122,7 +126,6 @@ def add_class():
     
     with lock:
         try:
-            # Проверяем, есть ли уже такой класс
             check = supabase.table("classes").select("name").eq("name", name).execute()
             if check.data and len(check.data) > 0:
                 return jsonify(error="Bu sınıf zaten var"), 409
@@ -139,6 +142,8 @@ def add_class():
 @app.post("/api/tasks")
 @teacher_only
 def add_task():
+    if not supabase:
+        return jsonify(error="Veritabanı bağlantısı yok"), 500
     body = request.get_json(silent=True) or {}
     cls = str(body.get("cls", ""))
     text = body.get("text", "")
@@ -159,15 +164,14 @@ def add_task():
     }
 
     with lock:
-        # Проверяем существование класса в базе
-        cls_check = supabase.table("classes").select("name").eq("name", cls).execute()
-        if not cls_check.data:
-            return jsonify(error="Böyle bir sınıf yok"), 400
-
         try:
+            cls_check = supabase.table("classes").select("name").eq("name", cls).execute()
+            if not cls_check.data:
+                return jsonify(error="Böyle bir sınıf yok"), 400
+
             supabase.table("tasks").insert(task_row).execute()
         except Exception as e:
-            return jsonify(error=f"Kayıт hatası: {str(e)}"), 500
+            return jsonify(error=f"Kayıt hatası: {str(e)}"), 500
 
     task_response = {
         "id": task_id,
@@ -184,6 +188,8 @@ def add_task():
 @app.delete("/api/tasks/<task_id>")
 @teacher_only
 def delete_task(task_id):
+    if not supabase:
+        return jsonify(error="Veritabanı bağlantısı yok"), 500
     with lock:
         try:
             res = supabase.table("tasks").delete().eq("id", task_id).execute()
