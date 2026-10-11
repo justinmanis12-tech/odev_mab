@@ -1,18 +1,24 @@
-import json
 import os
 import secrets
-import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
 from functools import wraps
 
 from flask import Flask, jsonify, request, send_from_directory
+from supabase import create_client, Client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
-os.makedirs(DATA_DIR, exist_ok=True)
-DATA_FILE = os.path.join(DATA_DIR, "data.json")
+
+# Подключение к Supabase из переменных окружения Render
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+# Поддерживаем как service_role, так и anon ключ
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Критическая ошибка: SUPABASE_URL и SUPABASE_KEY должны быть заданы в переменных окружения Render!")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 _env_code = os.environ.get("TEACHER_CODE")
 TEACHER_CODE = (_env_code if _env_code else "ogretmen").strip().strip("\"'").strip()
@@ -29,26 +35,41 @@ lock = threading.Lock()
 
 
 def load_data():
+    """Загружает классы и задачи из Supabase, формируя структуру для фронтенда"""
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if isinstance(d.get("classes"), list) and isinstance(d.get("tasks"), dict):
-            return d
-    except (OSError, ValueError, AttributeError):
-        pass
-    return {"classes": DEFAULT_CLASSES[:], "tasks": {}}
+        # Загружаем классы
+        res_classes = supabase.table("classes").select("name").execute()
+        classes = [row["name"] for row in (res_classes.data or [])]
 
+        # Если таблица классов пуста, автоматически заполняем дефолтными
+        if not classes:
+            classes = DEFAULT_CLASSES[:]
+            for c in classes:
+                try:
+                    supabase.table("classes").insert({"name": c}).execute()
+                except Exception:
+                    pass
 
-def save_data(d):
-    fd, tmp = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False)
-        os.replace(tmp, DATA_FILE)  # атомарная запись, файл не побьётся при сбое
-    except Exception:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
+        # Загружаем задачи
+        res_tasks = supabase.table("tasks").select("*").execute()
+        tasks_dict = {}
+        for t in (res_tasks.data or []):
+            cls_name = t.get("cls")
+            task_obj = {
+                "id": t.get("id"),
+                "cls": cls_name,
+                "subject": t.get("subject", ""),
+                "teacher": t.get("teacher", ""),
+                "fileName": t.get("file_name", "odev.txt"),
+                "text": t.get("task_text", ""),
+                "date": t.get("date"),
+            }
+            tasks_dict.setdefault(cls_name, []).append(task_obj)
+
+        return {"classes": classes, "tasks": tasks_dict}
+    except Exception as e:
+        print(f"Ошибка при загрузке данных из Supabase: {e}")
+        return {"classes": DEFAULT_CLASSES[:], "tasks": {}}
 
 
 def code_ok(code):
@@ -80,7 +101,7 @@ def get_data():
 
 @app.get("/api/health")
 def health():
-    return jsonify(version="v3", teacher_code_from_env=bool(_env_code))
+    return jsonify(version="v3-supabase-ready", teacher_code_from_env=bool(_env_code))
 
 
 @app.post("/api/login")
@@ -98,12 +119,20 @@ def add_class():
     name = str(body.get("name", "")).strip()
     if not name or len(name) > 20:
         return jsonify(error="Sınıf adı 1-20 karakter olmalı"), 400
+    
     with lock:
-        d = load_data()
-        if any(c.lower() == name.lower() for c in d["classes"]):
-            return jsonify(error="Bu sınıf zaten var"), 409
-        d["classes"].append(name)
-        save_data(d)
+        try:
+            # Проверяем, есть ли уже такой класс
+            check = supabase.table("classes").select("name").eq("name", name).execute()
+            if check.data and len(check.data) > 0:
+                return jsonify(error="Bu sınıf zaten var"), 409
+
+            res = supabase.table("classes").insert({"name": name}).execute()
+            if not res.data:
+                return jsonify(error="Bu sınıf zaten var"), 409
+        except Exception as e:
+            return jsonify(error=f"Kayıt hatası: {str(e)}"), 409
+            
     return jsonify(name=name), 201
 
 
@@ -117,35 +146,51 @@ def add_task():
         return jsonify(error="Dosya boş"), 400
     if len(text) > MAX_TEXT_CHARS:
         return jsonify(error="Dosya çok büyük"), 413
-    task = {
-        "id": uuid.uuid4().hex[:12],
+
+    task_id = uuid.uuid4().hex[:12]
+    task_row = {
+        "id": task_id,
         "cls": cls,
         "subject": str(body.get("subject", "")).strip()[:60],
         "teacher": str(body.get("teacher", "")).strip()[:100],
-        "fileName": str(body.get("fileName", "odev.txt"))[:200],
-        "text": text,
+        "file_name": str(body.get("fileName", "odev.txt"))[:200],
+        "task_text": text,
         "date": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     }
+
     with lock:
-        d = load_data()
-        if cls not in d["classes"]:
+        # Проверяем существование класса в базе
+        cls_check = supabase.table("classes").select("name").eq("name", cls).execute()
+        if not cls_check.data:
             return jsonify(error="Böyle bir sınıf yok"), 400
-        d["tasks"].setdefault(cls, []).append(task)
-        save_data(d)
-    return jsonify(task), 201
+
+        try:
+            supabase.table("tasks").insert(task_row).execute()
+        except Exception as e:
+            return jsonify(error=f"Kayıт hatası: {str(e)}"), 500
+
+    task_response = {
+        "id": task_id,
+        "cls": cls,
+        "subject": task_row["subject"],
+        "teacher": task_row["teacher"],
+        "fileName": task_row["file_name"],
+        "text": text,
+        "date": task_row["date"],
+    }
+    return jsonify(task_response), 201
 
 
 @app.delete("/api/tasks/<task_id>")
 @teacher_only
 def delete_task(task_id):
     with lock:
-        d = load_data()
-        for cls, items in d["tasks"].items():
-            kept = [t for t in items if t.get("id") != task_id]
-            if len(kept) != len(items):
-                d["tasks"][cls] = kept
-                save_data(d)
+        try:
+            res = supabase.table("tasks").delete().eq("id", task_id).execute()
+            if res.data and len(res.data) > 0:
                 return "", 204
+        except Exception:
+            pass
     return jsonify(error="Ödev bulunamadı"), 404
 
 
